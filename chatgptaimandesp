@@ -9,7 +9,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "FOV Lock & ESP",
     LoadingTitle = "Loading FOV Lock",
-    LoadingSubtitle = "by YourName",
+    LoadingSubtitle = "by Toopy",
     ConfigurationSaving = {
         Enabled = true,
         FolderName = "FOVLockConfig",
@@ -34,6 +34,151 @@ local FOV_Circle = Drawing.new("Circle")
 FOV_Circle.Color = Color3.fromRGB(0, 255, 100)
 FOV_Circle.Thickness = 1.5
 FOV_Circle.Filled = false
+FOV_Circle.Radius = FOV_Radius
+FOV_Circle.Visible = true
+
+local ESP_Boxes = {}
+
+--// Create UI Tabs
+local MainTab = Window:CreateTab("Main", 4483362458)
+local VisualsTab = Window:CreateTab("Visuals", 4483362458)
+
+--// Controls
+MainTab:CreateToggle({
+    Name = "Enable Camera Lock",
+    CurrentValue = false,
+    Flag = "LockEnabled",
+    Callback = function(Value)
+        LockEnabled = Value
+    end
+})
+
+VisualsTab:CreateToggle({
+    Name = "Enable ESP",
+    CurrentValue = true,
+    Flag = "ESPEnabled",
+    Callback = function(Value)
+        ESP_Enabled = Value
+    end
+})
+
+VisualsTab:CreateSlider({
+    Name = "FOV Radius",
+    Range = {25, 300},
+    Increment = 5,
+    CurrentValue = FOV_Radius,
+    Flag = "FOVRadius",
+    Callback = function(Value)
+        FOV_Radius = Value
+        FOV_Circle.Radius = Value
+    end
+})
+
+--// ESP Functions
+local function createESP(plr)
+    local box = Drawing.new("Square")
+    box.Thickness = 1
+    box.Filled = false
+    box.Color = Color3.fromRGB(0, 255, 0)
+    box.Transparency = 0.9
+    ESP_Boxes[plr] = box
+end
+
+local function removeESP(plr)
+    if ESP_Boxes[plr] then
+        ESP_Boxes[plr]:Remove()
+        ESP_Boxes[plr] = nil
+    end
+end
+
+for _, plr in pairs(game.Players:GetPlayers()) do
+    if plr ~= Player then
+        createESP(plr)
+    end
+end
+
+game.Players.PlayerAdded:Connect(function(plr)
+    if plr ~= Player then
+        createESP(plr)
+    end
+end)
+
+game.Players.PlayerRemoving:Connect(removeESP)
+
+--// Get Closest Player in FOV
+local function getClosestInFOV()
+    local closest = nil
+    local shortest = math.huge
+
+    for _, plr in pairs(game.Players:GetPlayers()) do
+        if plr ~= Player and plr.Character and plr.Character:FindFirstChild("Head") then
+            local headPos, onScreen = Camera:WorldToViewportPoint(plr.Character.Head.Position)
+            if onScreen then
+                local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+                local dist = (Vector2.new(headPos.X, headPos.Y) - center).Magnitude
+                if dist <= FOV_Radius and dist < shortest then
+                    shortest = dist
+                    closest = plr
+                end
+            end
+        end
+    end
+    return closest
+end
+
+--// Check if Target is Visible
+local function isVisible(target)
+    local head = target.Character:FindFirstChild("Head")
+    if not head then return false end
+
+    -- Raycast to see if the head is visible
+    local ray = Ray.new(Camera.CFrame.Position, head.Position - Camera.CFrame.Position)
+    local hitPart = workspace:FindPartOnRay(ray, Player.Character, false, true)
+    
+    return hitPart == head
+end
+
+--// Main Render Loop
+RunService.RenderStepped:Connect(function()
+    -- FOV Circle
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    FOV_Circle.Position = center
+    FOV_Circle.Visible = true
+
+    -- ESP Update
+    for plr, box in pairs(ESP_Boxes) do
+        if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+            local root = plr.Character.HumanoidRootPart
+            local head = plr.Character:FindFirstChild("Head")
+            local rootPos, onScreen = Camera:WorldToViewportPoint(root.Position)
+            local headPos = Camera:WorldToViewportPoint(head.Position)
+
+            if onScreen and ESP_Enabled then
+                local scale = 1 / headPos.Z * 1000
+                local size = Vector2.new(30 * scale, 40 * scale)
+                local position = Vector2.new(rootPos.X - size.X / 2, rootPos.Y - size.Y / 2)
+                box.Size = size
+                box.Position = position
+                box.Visible = true
+            else
+                box.Visible = false
+            end
+        else
+            box.Visible = false
+        end
+    end
+
+    -- Camera Lock (Aimbot with Visibility Check)
+    if LockEnabled then
+        local closest = getClosestInFOV()
+        if closest and closest.Character and closest.Character:FindFirstChild("Head") then
+            if isVisible(closest) then
+                TargetPlayer = closest
+                Camera.CFrame = CFrame.new(Camera.CFrame.Position, TargetPlayer.Character.Head.Position)
+            end
+        end
+    end
+end)
 FOV_Circle.Radius = FOV_Radius
 FOV_Circle.Visible = true
 

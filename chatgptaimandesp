@@ -1,39 +1,341 @@
---// Safe Rayfield Load
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-if not Rayfield then
-    warn("❌ Failed to load Rayfield library.")
-    return
+-- CameraLock_Obsidian_LocalScript.lua
+-- Studio / Private use ONLY. Do NOT use to gain unfair advantage in live multiplayer games.
+-- Put this LocalScript into StarterPlayer > StarterPlayerScripts (client-side).
+-- Optional: supply a circular PNG asset id to VisualFOVImageAssetId to show an on-screen FOV circle.
+-- Features:
+--  • Draggable toggle ImageButton with ON/OFF label (Obsidian-style look can be achieved by replacing images/styles)
+--  • Customizable FOV (degrees)
+--  • Finds players whose head is inside FOV and line-of-sight (raycast) and locks camera to their head
+--  • Stops locking when the targeted player's Humanoid dies
+--  • Strictly client-side; intended for Studio testing / recording / consenting players.
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local localPlayer = Players.LocalPlayer
+local camera = Workspace.CurrentCamera
+
+-- ======= CONFIG =======
+local CONFIG = {
+    FOV_DEGREES = 30,                -- angular radius in degrees for the FOV cone
+    SEARCH_DISTANCE = 200,           -- max distance to consider targets
+    CAMERA_BACKOFF = 5,              -- how many studs behind the head to place the camera
+    SMOOTH_SPEED = 12,               -- higher = snappier
+    VISUAL_FOV_ASSET = 137322132382651,          -- set to an asset id string e.g. "rbxassetid://123456" to show a circle image
+    TOGGLE_IMAGE_ASSET = 11353098069,        -- optional Image asset for the draggable toggle button
+}
+
+-- ======= GUI SETUP =======
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "CameraLockUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+
+-- Toggle button (ImageButton so it's draggable and styled)
+local toggleBtn = Instance.new("ImageButton")
+toggleBtn.Name = "CameraLockToggle"
+toggleBtn.Size = UDim2.new(0, 90, 0, 34)
+toggleBtn.Position = UDim2.new(0, 20, 0, 80)
+toggleBtn.AnchorPoint = Vector2.new(0,0)
+toggleBtn.BackgroundTransparency = 0.15
+toggleBtn.BackgroundColor3 = Color3.fromRGB(30,30,30)
+toggleBtn.BorderSizePixel = 0
+if CONFIG.TOGGLE_IMAGE_ASSET then
+    toggleBtn.Image = CONFIG.TOGGLE_IMAGE_ASSET
+else
+    toggleBtn.Image = ""
 end
 
---// Create Window
-local Window = Rayfield:CreateWindow({
-    Name = "FOV Lock & ESP",
-    LoadingTitle = "Loading FOV Lock",
-    LoadingSubtitle = "by Toopy",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "FOVLockConfig",
-        FileName = "Settings"
-    },
-    KeySystem = false
-})
+-- Label inside button
+local label = Instance.new("TextLabel")
+label.Name = "StateLabel"
+label.Size = UDim2.new(1, -8, 1, -8)
+label.Position = UDim2.new(0, 4, 0, 4)
+label.BackgroundTransparency = 1
+label.Text = "OFF"
+label.Font = Enum.Font.GothamBold
+label.TextSize = 14
+label.TextColor3 = Color3.fromRGB(220,220,220)
+label.TextXAlignment = Enum.TextXAlignment.Center
+label.TextYAlignment = Enum.TextYAlignment.Center
+label.Parent = toggleBtn
 
---// Dependencies
-local Player = game.Players.LocalPlayer
-local Camera = workspace.CurrentCamera
-local RunService = game:GetService("RunService")
+-- Small subtitle for FOV config (click to open simple config)
+local sub = Instance.new("TextLabel")
+sub.Name = "FOVLabel"
+sub.Size = UDim2.new(0, 140, 0, 24)
+sub.Position = UDim2.new(0, 20 + 100, 0, 80)
+sub.BackgroundTransparency = 0.15
+sub.BackgroundColor3 = Color3.fromRGB(24,24,24)
+sub.BorderSizePixel = 0
+sub.Text = string.format("FOV: %d°", CONFIG.FOV_DEGREES)
+sub.Font = Enum.Font.Gotham
+sub.TextSize = 13
+sub.TextColor3 = Color3.fromRGB(200,200,200)
+sub.Parent = screenGui
 
---// Variables
-local FOV_Radius = 120
-local LockEnabled = false
-local ESP_Enabled = true
-local TargetPlayer = nil
+-- Optional visual FOV (requires asset). If you set CONFIG.VISUAL_FOV_ASSET to an image that's a circle with transparent background
+local visualFOV
+if CONFIG.VISUAL_FOV_ASSET then
+    visualFOV = Instance.new("ImageLabel")
+    visualFOV.Name = "FOVCircle"
+    visualFOV.Size = UDim2.new(0, 300, 0, 300)
+    visualFOV.AnchorPoint = Vector2.new(0.5, 0.5)
+    visualFOV.Position = UDim2.new(0.5, 0, 0.5, 0)
+    visualFOV.BackgroundTransparency = 1
+    visualFOV.Image = CONFIG.VISUAL_FOV_ASSET
+    visualFOV.Parent = screenGui
+end
 
---// Drawing Objects
-local FOV_Circle = Drawing.new("Circle")
-FOV_Circle.Color = Color3.fromRGB(0, 255, 100)
-FOV_Circle.Thickness = 1.5
-FOV_Circle.Filled = false
+-- Make toggle draggable
+local dragging = false
+local dragStart, startPos
+
+local function updateDrag(input)
+    if not dragging then return end
+    local delta = input.Position - dragStart
+    toggleBtn.Position = UDim2.new(0, math.clamp(startPos.X + delta.X, 0, workspace.CurrentCamera.ViewportSize.X - toggleBtn.AbsoluteSize.X), 0, math.clamp(startPos.Y + delta.Y, 0, workspace.CurrentCamera.ViewportSize.Y - toggleBtn.AbsoluteSize.Y))
+    sub.Position = UDim2.new(0, toggleBtn.Position.X.Offset + 100, 0, toggleBtn.Position.Y.Offset)
+end
+
+toggleBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = Vector2.new(toggleBtn.Position.X.Offset, toggleBtn.Position.Y.Offset)
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        updateDrag(input)
+    elseif input.UserInputType == Enum.UserInputType.Touch then
+        updateDrag(input)
+    end
+end)
+
+-- Simple left-click toggling
+local enabled = false
+local function setEnabled(val)
+    enabled = val
+    label.Text = enabled and "ON" or "OFF"
+    if enabled then
+        label.TextColor3 = Color3.fromRGB(120, 255, 120)
+    else
+        label.TextColor3 = Color3.fromRGB(220,220,220)
+    end
+end
+
+toggleBtn.MouseButton1Click:Connect(function()
+    setEnabled(not enabled)
+end)
+
+-- Small clickable area to change FOV (cycles values)
+local FOV_VALUES = {10, 20, 30, 45, 60, 90}
+local fovIndex = 3 -- default index for 30 degrees
+sub.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        fovIndex = fovIndex % #FOV_VALUES + 1
+        CONFIG.FOV_DEGREES = FOV_VALUES[fovIndex]
+        sub.Text = string.format("FOV: %d°", CONFIG.FOV_DEGREES)
+        if visualFOV then
+            -- adjust visual size roughly proportional to FOV
+            local size = math.clamp(CONFIG.FOV_DEGREES * 4, 80, 600)
+            visualFOV.Size = UDim2.new(0, size, 0, size)
+        end
+    end
+end)
+
+-- ======= CORE LOGIC =======
+
+local function isAlive(character)
+    if not character then return false end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    return humanoid and humanoid.Health > 0
+end
+
+local function getHead(player)
+    if not player or not player.Character then return nil end
+    local head = player.Character:FindFirstChild("Head")
+    if head and head:IsA("BasePart") then return head end
+    return nil
+end
+
+local function unitAngleBetween(vecA, vecB)
+    local a = vecA.Unit
+    local b = vecB.Unit
+    local dot = math.clamp(a:Dot(b), -1, 1)
+    return math.deg(math.acos(dot))
+end
+
+local function hasLineOfSight(fromPos, toPos, ignoreList)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = ignoreList or {}
+    params.IgnoreWater = true
+    local direction = toPos - fromPos
+    local result = Workspace:Raycast(fromPos, direction, params)
+    if result then
+        -- if the first thing hit is the target part itself (or descendant), it's visible
+        -- otherwise it's blocked
+        return false, result
+    end
+    return true, nil
+end
+
+-- Helper: find best target in FOV
+local function findTarget()
+    if not camera or not camera.CameraType then return nil end
+    local camPos = camera.CFrame.Position
+    local camLook = camera.CFrame.LookVector
+
+    local best, bestAng, bestDist
+    for _, pl in pairs(Players:GetPlayers()) do
+        if pl ~= localPlayer and pl.Character and isAlive(pl.Character) then
+            local head = getHead(pl)
+            if head then
+                local toHead = head.Position - camPos
+                local dist = toHead.Magnitude
+                if dist <= CONFIG.SEARCH_DISTANCE then
+                    local ang = unitAngleBetween(camLook, toHead)
+                    if ang <= CONFIG.FOV_DEGREES then
+                        -- raycast to check LOS; ignore local player and target character when doing raycast? we want to detect obstacles between camera and head
+                        local ignore = {localPlayer.Character, pl.Character}
+                        local visible = hasLineOfSight(camPos, head.Position, ignore)
+                        if visible then
+                            if not best or ang < bestAng then
+                                best = pl
+                                bestAng = ang
+                                bestDist = dist
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- Active camera lock state
+local currentTarget
+local connectionRender
+local function releaseCamera()
+    if connectionRender then
+        connectionRender:Disconnect()
+        connectionRender = nil
+    end
+    if camera then
+        camera.CameraType = Enum.CameraType.Custom
+    end
+    currentTarget = nil
+end
+
+local function lockToTarget(player)
+    if not player or not player.Character then return end
+    local head = getHead(player)
+    if not head then return end
+    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+
+    -- set camera scriptable
+    camera.CameraType = Enum.CameraType.Scriptable
+    currentTarget = player
+
+    -- listen for death
+    local diedConn
+    diedConn = humanoid.Died:Connect(function()
+        diedConn:Disconnect()
+        releaseCamera()
+    end)
+
+    -- render loop: smoothly position camera behind the head and look at it
+    local lastCFrame = camera.CFrame
+    connectionRender = RunService.RenderStepped:Connect(function(dt)
+        if not enabled then
+            diedConn:Disconnect()
+            releaseCamera()
+            return
+        end
+        if not player.Parent or not isAlive(player.Character) then
+            diedConn:Disconnect()
+            releaseCamera()
+            return
+        end
+        local headPart = getHead(player)
+        if not headPart then return end
+
+        -- check LOS each frame (cheap) - if blocked, release
+        local visible = hasLineOfSight(camera.CFrame.Position, headPart.Position, {localPlayer.Character, player.Character})
+        if not visible then
+            -- no LOS -> release camera (it will attempt to find next target)
+            diedConn:Disconnect()
+            releaseCamera()
+            return
+        end
+
+        -- desired camera position: behind the head by CAMERA_BACKOFF along the head's look vector
+        local back = headPart.CFrame.LookVector * -CONFIG.CAMERA_BACKOFF
+        local desiredPos = headPart.Position + Vector3.new(0, 0.5, 0) + back
+        local desiredCFrame = CFrame.new(desiredPos, headPart.Position + Vector3.new(0, 0.5, 0))
+
+        -- smooth interp
+        local alpha = math.clamp(CONFIG.SMOOTH_SPEED * dt, 0, 1)
+        local newCFrame = lastCFrame:Lerp(desiredCFrame, alpha)
+        camera.CFrame = newCFrame
+        lastCFrame = newCFrame
+    end)
+end
+
+
+-- Main loop: when enabled search for a target in FOV and lock
+RunService.Heartbeat:Connect(function()
+    if not enabled then
+        if currentTarget then
+            releaseCamera()
+        end
+        return
+    end
+
+    -- if already locked to a valid target, nothing to do
+    if currentTarget and currentTarget.Character and isAlive(currentTarget.Character) then
+        return
+    end
+
+    -- find new target
+    local target = findTarget()
+    if target then
+        lockToTarget(target)
+    end
+end)
+
+-- Clean up when local player leaves
+localPlayer.OnTeleport:Connect(function(state)
+    releaseCamera()
+end)
+
+-- Initialize visuals if any
+if visualFOV then
+    visualFOV.Visible = true
+    local size = math.clamp(CONFIG.FOV_DEGREES * 4, 80, 600)
+    visualFOV.Size = UDim2.new(0, size, 0, size)
+    visualFOV.AnchorPoint = Vector2.new(0.5, 0.5)
+    visualFOV.Position = UDim2.new(0.5, 0.5)
+end
+
+-- Final note: This script is intentionally client-side and designed for Studio/consensual use only.
+-- Replace the GUI styling with your Obsidian components if you want a native Obsidian look — the logic
+-- for FOV, raycast LOS, and camera control is self-contained and safe to integrate into your UI framework.
+
+print("CameraLock UI loaded. Click the toggle to enable.")
+
 FOV_Circle.Radius = FOV_Radius
 FOV_Circle.Visible = true
 

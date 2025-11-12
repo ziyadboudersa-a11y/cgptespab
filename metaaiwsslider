@@ -1,0 +1,73 @@
+-- meta ai speed slider
+
+-- Services
+local Players = game:GetService("Players")
+local StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
+
+-- Local player
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+
+-- GUI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Parent = StarterGui
+
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 200, 0, 50)
+Frame.Position = UDim2.new(0.5, -100, 0.5, -25)
+Frame.BackgroundColor3 = Color3.new(1, 1, 1)
+Frame.Parent = ScreenGui
+
+local SliderFrame = Instance.new("Frame")
+SliderFrame.Size = UDim2.new(0, 200, 0, 20)
+SliderFrame.Position = UDim2.new(0, 0, 0, 30)
+SliderFrame.BackgroundColor3 = Color3.new(0.5, 0.5, 0.5)
+SliderFrame.Parent = Frame
+
+local SliderButton = Instance.new("TextButton")
+SliderButton.Size = UDim2.new(0, 10, 0, 20)
+SliderButton.Position = UDim2.new(0, 0, 0, 0)
+SliderButton.Text = ""
+SliderButton.Parent = SliderFrame
+
+local MinValue = 16
+local MaxValue = 50
+local Value = humanoid.WalkSpeed
+
+-- Function to update walk speed
+local function updateWalkSpeed()
+    humanoid.WalkSpeed = Value
+end
+
+-- Function to update slider position
+local function updateSliderPosition()
+    local position = (Value - MinValue) / (MaxValue - MinValue)
+    SliderButton.Position = UDim2.new(position, 0, 0, 0)
+end
+
+-- Update initial slider position
+updateSliderPosition()
+
+-- Slider logic
+local dragging = false
+SliderButton.MouseButton1Down:Connect(function()
+    dragging = true
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
+        local position = input.Position.X - SliderFrame.AbsolutePosition.X
+        local value = MinValue + (position / SliderFrame.AbsoluteSize.X) * (MaxValue - MinValue)
+        Value = math.clamp(value, MinValue, MaxValue)
+        updateSliderPosition()
+        updateWalkSpeed()
+    end
+end)

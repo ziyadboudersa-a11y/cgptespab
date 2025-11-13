@@ -1,0 +1,115 @@
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Rayfield UI library
+local Rayfield = loadstring(game:HttpGet("https:                                                                      
+
+-- Local player
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local camera = workspace.CurrentCamera
+
+-- UI
+local window = Rayfield:Window({
+    Title = "Aimbot",
+    TabSystem = true
+})
+
+local tab = window:Tab("Aimbot")
+
+-- FOV circle
+local fovCircle = Drawing.new("Circle")
+fovCircle.Color = Color3.new(1, 1, 1)
+fovCircle.Thickness = 1
+fovCircle.Transparency = 1
+fovCircle.Radius = 100
+fovCircle.Visible = false
+
+-- Aimbot settings
+local aimbotEnabled = false
+local fov = 100
+local smoothing = 0.1
+
+-- Aimbot function
+local function aimAt(target)
+    local targetPosition = target.Position
+    local cameraPosition = camera.CFrame.Position
+    local direction = (targetPosition - cameraPosition).Unit
+    local aimPosition = cameraPosition + direction * (targetPosition - cameraPosition).Magnitude
+
+    local aimCFrame = CFrame.new(cameraPosition, aimPosition)
+    camera.CFrame = camera.CFrame:Lerp(aimCFrame, smoothing)
+end
+
+-- Update FOV circle
+RunService.RenderStepped:Connect(function()
+    fovCircle.Position = UserInputService:GetMouseLocation()
+    fovCircle.Radius = fov
+end)
+
+-- Aimbot loop
+RunService.RenderStepped:Connect(function()
+    if aimbotEnabled then
+        local closestTarget = nil
+        local closestDistance = math.huge
+
+        for _, enemy in pairs(Players:GetPlayers()) do
+            if enemy ~= player and enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart") then
+                local enemyPosition = enemy.Character.HumanoidRootPart.Position
+                local screenPosition, onScreen = camera:WorldToScreenPoint(enemyPosition)
+
+                if onScreen then
+                    local distance = (UserInputService:GetMouseLocation() - Vector2.new(screenPosition.X, screenPosition.Y)).Magnitude
+
+                    if distance < fov and distance < closestDistance then
+                        closestTarget = enemy.Character.HumanoidRootPart
+                        closestDistance = distance
+                    end
+                end
+            end
+        end
+
+        if closestTarget then
+            aimAt(closestTarget)
+        end
+    end
+end)
+
+-- UI elements
+tab:Toggle({
+    Name = "Aimbot",
+    CurrentValue = false,
+    Callback = function(value)
+        aimbotEnabled = value
+    end
+})
+
+tab:Slider({
+    Name = "FOV",
+    MinValue = 50,
+    MaxValue = 500,
+    CurrentValue = 100,
+    Callback = function(value)
+        fov = value
+    end
+})
+
+tab:Slider({
+    Name = "Smoothing",
+    MinValue = 0.01,
+    MaxValue = 1,
+    CurrentValue = 0.1,
+    Callback = function(value)
+        smoothing = value
+    end
+})
+
+tab:Button({
+    Name = "Toggle FOV Circle",
+    Callback = function()
+        fovCircle.Visible = not fovCircle.Visible
+    end
+})
